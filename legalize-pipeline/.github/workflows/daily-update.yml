@@ -1,0 +1,94 @@
+name: Daily Law Update
+
+on:
+  schedule:
+    - cron: '0 4 * * *' # 13:00 KST (UTC+9)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: law-update
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  update:
+    runs-on: self-hosted
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout law repo
+        uses: actions/checkout@v4
+        with:
+          repository: legalize-kr/legalize-kr
+          token: ${{ secrets.REPO_PAT }}
+          fetch-depth: 0
+          path: workspace
+
+      - name: Clean previous pipeline checkout
+        run: rm -rf workspace/pipeline
+
+      - name: Checkout pipeline
+        uses: actions/checkout@v4
+        with:
+          path: workspace/pipeline
+
+      - name: Checkout docs repo
+        uses: actions/checkout@v4
+        with:
+          repository: legalize-kr/legalize-web
+          token: ${{ secrets.REPO_PAT }}
+          path: docs-repo
+
+      - name: Setup Python venv
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install -r workspace/pipeline/requirements.txt
+
+      - name: Configure git
+        working-directory: workspace
+        run: |
+          git config user.name "legalize-kr-bot"
+          git config user.email "bot@legalize.kr"
+
+      - name: Run update
+        working-directory: workspace/pipeline
+        env:
+          LAW_OC: ${{ secrets.LAW_OC }}
+        run: |
+          . ../../.venv/bin/activate
+          python -m laws.update
+
+      - name: Validate
+        working-directory: workspace/pipeline
+        run: |
+          . ../../.venv/bin/activate
+          python -m laws.validate
+
+      - name: Push law changes
+        working-directory: workspace
+        run: |
+          if [ -n "$(git log origin/main..HEAD --oneline)" ]; then
+            git push
+          else
+            echo "No new commits to push"
+          fi
+
+      - name: Update docs stats
+        run: |
+          if [ -f workspace/stats.json ]; then
+            cp workspace/stats.json docs-repo/stats.json
+            cd docs-repo
+            git config user.name "legalize-kr-bot"
+            git config user.email "bot@legalize.kr"
+            git add stats.json
+            git diff --cached --quiet && echo "No docs changes" && exit 0
+            git commit --author="legalize-kr-bot <bot@legalize.kr>" -m "chore: update stats.json"
+            git push
+          fi

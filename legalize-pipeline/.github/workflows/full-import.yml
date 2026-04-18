@@ -1,0 +1,136 @@
+name: Full Law Import
+
+on:
+  workflow_dispatch:
+    inputs:
+      law_type:
+        description: '법령구분 필터 (e.g. 법률, 대통령령)'
+        required: false
+        default: ''
+      limit:
+        description: '최대 import 건수'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: law-update
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: self-hosted
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout law repo
+        uses: actions/checkout@v4
+        with:
+          repository: legalize-kr/legalize-kr
+          token: ${{ secrets.REPO_PAT }}
+          fetch-depth: 0
+          path: workspace
+
+      - name: Clean previous pipeline checkout
+        run: rm -rf workspace/pipeline
+
+      - name: Checkout pipeline
+        uses: actions/checkout@v4
+        with:
+          path: workspace/pipeline
+
+      - name: Checkout docs repo
+        uses: actions/checkout@v4
+        with:
+          repository: legalize-kr/legalize-web
+          token: ${{ secrets.REPO_PAT }}
+          path: docs-repo
+
+      - name: Setup Python venv
+        run: |
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install -r workspace/pipeline/requirements.txt
+
+      - name: Configure git
+        working-directory: workspace
+        run: |
+          git config user.name "legalize-kr-bot"
+          git config user.email "bot@legalize.kr"
+
+      - name: Build cache if missing
+        working-directory: workspace/pipeline
+        env:
+          LAW_OC: ${{ secrets.LAW_OC }}
+        run: |
+          . ../../.venv/bin/activate
+          if [ ! -d "../.cache/detail" ] || [ -z "$(ls -A ../.cache/detail/ 2>/dev/null)" ]; then
+            echo "Cache missing or empty, building..."
+            python -m laws.fetch_cache
+          else
+            echo "Cache exists ($(ls ../.cache/detail/*.xml 2>/dev/null | wc -l) detail files)"
+          fi
+
+      - name: Try download compiler
+        id: compiler
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.REPO_PAT }}
+        run: |
+          ASSET_URL=$(gh api repos/legalize-kr/compiler/releases/latest \
+            --jq '.assets[] | select(.name | test("linux.*x86_64|x86_64.*linux")) | .browser_download_url' 2>/dev/null)
+          if [ -n "$ASSET_URL" ]; then
+            echo "Downloading compiler from $ASSET_URL"
+            curl -sL "$ASSET_URL" -o /tmp/legalize-compiler
+            chmod +x /tmp/legalize-compiler
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No compiler release found, will use rebuild.py"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Rebuild repository
+        working-directory: workspace/pipeline
+        env:
+          LAW_OC: ${{ secrets.LAW_OC }}
+          LAW_TYPE: ${{ inputs.law_type }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          . ../../.venv/bin/activate
+          if [ "${{ steps.compiler.outputs.available }}" = "true" ]; then
+            echo "Running compiler..."
+            /tmp/legalize-compiler --cache ../.cache --output ..
+          else
+            echo "Running rebuild..."
+            python -m laws.rebuild --branch rebuild
+          fi
+
+      - name: Validate
+        working-directory: workspace/pipeline
+        run: |
+          . ../../.venv/bin/activate
+          python -m laws.validate
+
+      - name: Force push rebuilt history
+        working-directory: workspace
+        run: |
+          BRANCH=$(git rev-parse --abbrev-ref HEAD)
+          if [ "$BRANCH" = "rebuild" ]; then
+            git branch -M rebuild main
+          fi
+          git push --force origin main
+
+      - name: Update docs stats
+        run: |
+          if [ -f workspace/stats.json ]; then
+            cp workspace/stats.json docs-repo/stats.json
+            cd docs-repo
+            git config user.name "legalize-kr-bot"
+            git config user.email "bot@legalize.kr"
+            git add stats.json
+            git diff --cached --quiet && echo "No docs changes" && exit 0
+            git commit --author="legalize-kr-bot <bot@legalize.kr>" -m "chore: update stats.json"
+            git push
+          fi

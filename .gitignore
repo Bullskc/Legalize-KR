@@ -1,0 +1,6 @@
+node_modules/
+graphify-out/
+.cache/
+target/
+.DS_Store
+*.log

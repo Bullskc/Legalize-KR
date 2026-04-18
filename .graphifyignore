@@ -1,0 +1,14 @@
+# 판례 원문 (123,550 파일) - 그래프 구축 제외
+precedent-kr/
+
+# 법률 원문 데이터 (6,989 파일) - 그래프 구축 제외
+legalize-kr/
+
+# 빌드 산출물
+graphify-out/
+node_modules/
+__pycache__/
+*.pyc
+.git/
+dist/
+build/

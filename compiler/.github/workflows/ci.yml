@@ -1,0 +1,19 @@
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-shear
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test
+      - run: cargo clippy --no-deps -- -D warnings
+      - run: cargo shear
+      - run: cargo fmt -- --check

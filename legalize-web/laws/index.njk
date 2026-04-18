@@ -1,0 +1,126 @@
+---
+layout: base.njk
+title: 법령 목록 — Legalize KR
+description: 대한민국 현행 법령 전문 열람. 법률, 대통령령, 시행규칙 등 6,900여 건의 법령을 검색하고 열람하세요.
+permalink: /laws/
+---
+
+<main class="laws-list-page">
+  <div class="container">
+    <div class="laws-list-header">
+      <h1>법령 목록</h1>
+      <p>대한민국 현행 법령 <strong>{{ laws | length }}건</strong>을 검색하고 열람하세요.</p>
+    </div>
+
+    <div class="laws-search-bar">
+      <div class="laws-search-input-wrap">
+        <svg class="laws-search-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input
+          id="law-search"
+          type="search"
+          placeholder="법령명 검색..."
+          autocomplete="off"
+          spellcheck="false"
+        >
+      </div>
+      <select id="law-type-filter">
+        <option value="">전체 법령구분</option>
+        <option value="법률">법률</option>
+        <option value="대통령령">대통령령</option>
+        <option value="총리령">총리령</option>
+        <option value="부령">부령</option>
+        <option value="헌법">헌법</option>
+        <option value="대법원규칙">대법원규칙</option>
+        <option value="국회규칙">국회규칙</option>
+        <option value="헌법재판소규칙">헌법재판소규칙</option>
+        <option value="감사원규칙">감사원규칙</option>
+        <option value="선거관리위원회규칙">선거관리위원회규칙</option>
+      </select>
+      <div id="law-count" class="laws-result-count"></div>
+    </div>
+
+    <div class="laws-table-wrap">
+      <table class="laws-index-table" id="laws-table">
+        <thead>
+          <tr>
+            <th>법령명</th>
+            <th>법령구분</th>
+            <th>소관부처</th>
+            <th>공포일자</th>
+            <th>시행일자</th>
+          </tr>
+        </thead>
+        <tbody id="laws-tbody">
+          {% for law in laws | sort(false, false, "title") %}
+          <tr
+            class="law-row"
+            data-title="{{ law.title }}"
+            data-type="{{ law.lawType }}"
+            data-href="/laws/{{ law.mst }}/"
+          >
+            <td class="law-row-title">
+              <a href="/laws/{{ law.mst }}/">{{ law.title }}</a>
+              <span class="law-row-file">{{ law.fileBase }}</span>
+            </td>
+            <td><span class="law-type-badge law-type-{{ law.lawType | replace(' ', '') }}">{{ law.lawType }}</span></td>
+            <td class="law-row-ministry">{{ law.ministry | join(", ") }}</td>
+            <td class="law-row-date">{{ law.promulgatedAt }}</td>
+            <td class="law-row-date">{{ law.enforcedAt }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div id="laws-empty" class="laws-empty" style="display:none">
+      검색 결과가 없습니다.
+    </div>
+  </div>
+</main>
+
+<script>
+(function() {
+  const searchInput = document.getElementById('law-search');
+  const typeFilter = document.getElementById('law-type-filter');
+  const tbody = document.getElementById('laws-tbody');
+  const countEl = document.getElementById('law-count');
+  const emptyEl = document.getElementById('laws-empty');
+  const rows = Array.from(tbody.querySelectorAll('tr.law-row'));
+
+  function updateCount(visible) {
+    countEl.textContent = visible + '건';
+  }
+
+  function filter() {
+    const query = searchInput.value.trim().toLowerCase();
+    const type = typeFilter.value;
+    let visible = 0;
+
+    rows.forEach(row => {
+      const title = row.dataset.title.toLowerCase();
+      const rowType = row.dataset.type;
+      const matchQuery = !query || title.includes(query);
+      const matchType = !type || rowType === type;
+      const show = matchQuery && matchType;
+      row.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+
+    updateCount(visible);
+    emptyEl.style.display = visible === 0 ? 'block' : 'none';
+  }
+
+  // Row click navigation
+  tbody.addEventListener('click', function(e) {
+    const row = e.target.closest('tr.law-row');
+    if (row && !e.target.closest('a')) {
+      window.location.href = row.dataset.href;
+    }
+  });
+
+  searchInput.addEventListener('input', filter);
+  typeFilter.addEventListener('change', filter);
+
+  updateCount(rows.length);
+})();
+</script>
