@@ -436,9 +436,10 @@ impl BareRepoWriter {
     /// Returns the HEAD commit SHA of the finished repository, or `[0u8; 20]` when no commits
     /// were ever appended.
     pub fn finish(mut self) -> Result<[u8; 20]> {
+        let parent_commit = self.parent_commit;
         self.writer.finish()?;
 
-        if let Some(parent_commit) = self.parent_commit {
+        if let Some(parent_commit) = parent_commit {
             let refs_heads = self.temp_output.join("refs/heads");
             fs::create_dir_all(&refs_heads)
                 .with_context(|| format!("failed to create {}", refs_heads.display()))?;
@@ -956,6 +957,12 @@ impl BareRepoWriter {
             author.name, author.email, time.epoch, committer.name, committer.email, time.epoch
         )
         .unwrap();
+
+        // Hard invariant: Ensure all commits from this compiler are +0900 KST.
+        assert!(
+            commit.contains(" +0900\n"),
+            "author-date timezone invariant broken: expected +0900 in commit object"
+        );
         self.writer
             .write_object(PackObjectKind::Commit, commit.as_bytes())
     }
@@ -1067,7 +1074,7 @@ impl PackWriter {
     }
 
     /// Finalizes the pack file (patches object count, appends checksum) and generates the `.idx`.
-    fn finish(&mut self) -> Result<()> {
+    fn finish(mut self) -> Result<()> {
         self.file.flush()?;
 
         // Patch the real object count at offset 8.
@@ -1079,7 +1086,7 @@ impl PackWriter {
         // Re-read entire file through SHA-1 hasher (streaming, 1MB chunks).
         let mut reader = BufReader::with_capacity(4 << 20, File::open(&self.path)?);
         let mut hasher = Sha1::new();
-        let mut buffer = [0u8; 1 << 20];
+        let mut buffer = vec![0u8; 1 << 20];
         loop {
             let n = reader.read(&mut buffer)?;
             if n == 0 {
@@ -1099,13 +1106,20 @@ impl PackWriter {
         // Generate .idx v2 file.
         self.write_idx_v2(&pack_checksum)?;
 
+        //
+        // Explicitly drop the writer before renaming so Windows doesn't block the move.
+        // The writer owns the BufWriter which owns the File handle.
+        //
+        let path = self.path.clone();
+        drop(self);
+
         // Rename tmp_pack.pack -> pack-{checksum_hex}.pack (and .idx similarly).
         let checksum_hex = hex(&pack_checksum);
-        let pack_dir = self.path.parent().context("pack path has no parent")?;
+        let pack_dir = path.parent().context("pack path has no parent")?;
         let final_pack = pack_dir.join(format!("pack-{checksum_hex}.pack"));
         let final_idx = pack_dir.join(format!("pack-{checksum_hex}.idx"));
-        let tmp_idx = self.path.with_extension("idx");
-        fs::rename(&self.path, &final_pack)?;
+        let tmp_idx = path.with_extension("idx");
+        fs::rename(&path, &final_pack)?;
         fs::rename(&tmp_idx, &final_idx)?;
         Ok(())
     }
